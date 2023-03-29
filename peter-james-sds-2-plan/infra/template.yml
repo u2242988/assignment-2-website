@@ -1,0 +1,190 @@
+Description: AAF Networking Template
+
+Parameters:
+  UserDataScript:
+    Type: String
+  SSHKey:
+    Type: String
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/22
+
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: eu-west-2a
+      MapPublicIpOnLaunch: true
+      CidrBlock: 10.0.0.0/24
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public Subnet A
+
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.2.0/24
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: eu-west-2a
+      Tags:
+        - Key: Name
+          Value: Private Subnet
+
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+
+  RouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+
+  NATGateway:
+    DependsOn: InternetGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+
+  NATGatewayRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NATGateway
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+      RouteTableId: !Ref PrivateRouteTable
+
+
+  PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for the EC2 instance
+      GroupName: aaf-security-group
+      VpcId: !Ref VPC
+
+      SecurityGroupIngress:
+        - Description: "Allow inbound traffic"
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: ssh
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+      SecurityGroupEgress:
+        - Description: "Allow outbound traffic"
+          IpProtocol: "-1"
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+
+  AccessKey:
+    Type: AWS::EC2::KeyPair
+    Properties: 
+      KeyName: aaf-key
+      PublicKeyMaterial: !Ref SSHKey
+      
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: NATGatewayRoute
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref AccessKey
+      ImageId: ami-09ee0944866c73f62
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      UserData:
+        Fn::Base64: !Ref UserDataScript
+      SubnetId: !Ref PrivateSubnet
+
+
+  NetworkLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: aaf-load-balancer
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet
+      Type: network
+
+
+  NetworkLoadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      IpAddressType: ipv4
+      Port: 80
+      Protocol: TCP
+      Targets:
+        - Id: !Ref EC2Instance
+          Port: 80
+      VpcId: !Ref VPC
+
+
+  NetworkLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NetworkLoadBalancerTargetGroup
+      LoadBalancerArn: !Ref NetworkLoadBalancer
+      Port: 80
+      Protocol: TCP
