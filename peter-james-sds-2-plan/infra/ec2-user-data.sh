@@ -55,7 +55,7 @@ curl --silent --location https://rpm.nodesource.com/setup_16.x | bash -
 yum -y install nodejs
 
 echo "installing application" | tee -a "${logName}"
-(cd /home/ec2-user && git clone https://github.com/u2242988/assignment-2-website.git)
+(cd /home/ec2-user && git clone https://github.com/u2242988/assignment-2-website.git /home/ec2-user/peter-james-sds-2-plan)
 
 echo "installing deps and starting application $(date)" | tee -a "${logName}"
 (cd /home/ec2-user/week-16-lab/app && npm install && DEBUG=* PORT=80 npm start)
